@@ -173,3 +173,27 @@ export type HealthReport = {
 export type HealthFixResult =
   | { ok: true; message: string }
   | { ok: false; error: string }
+
+export type BackupEntry = {
+  file: string
+  path: string
+  scope: SettingsScope | 'unknown'
+  timestamp: string
+  sizeBytes: number
+}
+
+export type BackupListResult =
+  | { ok: true; entries: BackupEntry[]; dir: string }
+  | { ok: false; error: string; dir: string }
+
+export type BackupReadResult =
+  | { ok: true; content: string }
+  | { ok: false; error: string }
+
+export type BackupRestoreResult =
+  | { ok: true; restoredPath: string; preRestoreBackup: string }
+  | { ok: false; error: string }
+
+export type BackupCleanupResult =
+  | { ok: true; removed: number; kept: number }
+  | { ok: false; error: string }

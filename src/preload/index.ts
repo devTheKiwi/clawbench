@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   AddServerInput,
+  BackupCleanupResult,
+  BackupListResult,
+  BackupReadResult,
+  BackupRestoreResult,
   HealthFixResult,
   HealthReport,
   HookEvent,
@@ -49,6 +53,15 @@ const api = {
   health: {
     run: (): Promise<HealthReport> => ipcRenderer.invoke('health:run'),
     fix: (id: string): Promise<HealthFixResult> => ipcRenderer.invoke('health:fix', id)
+  },
+  backups: {
+    list: (): Promise<BackupListResult> => ipcRenderer.invoke('backups:list'),
+    read: (file: string): Promise<BackupReadResult> =>
+      ipcRenderer.invoke('backups:read', file),
+    restore: (file: string): Promise<BackupRestoreResult> =>
+      ipcRenderer.invoke('backups:restore', file),
+    cleanup: (retention?: number): Promise<BackupCleanupResult> =>
+      ipcRenderer.invoke('backups:cleanup', retention)
   }
 }
 

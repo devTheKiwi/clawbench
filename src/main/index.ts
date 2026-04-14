@@ -6,6 +6,7 @@ import { registerSettingsIpc } from './ipc/settings'
 import { registerHooksIpc } from './ipc/hooks'
 import { registerMcpIpc } from './ipc/mcp'
 import { registerHealthIpc } from './ipc/health'
+import { registerBackupsIpc } from './ipc/backups'
 
 function createWindow(): void {
   // Create the browser window.
@@ -60,6 +61,7 @@ app.whenReady().then(() => {
   registerHooksIpc()
   registerMcpIpc()
   registerHealthIpc()
+  registerBackupsIpc()
 
   createWindow()
 

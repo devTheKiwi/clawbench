@@ -13,6 +13,7 @@ import {
 import TemplateGallery from './TemplateGallery'
 import TestRunModal from './TestRunModal'
 import LogsPanel from './LogsPanel'
+import BackupsModal from './BackupsModal'
 
 type LoadState =
   | { status: 'idle' }
@@ -43,6 +44,7 @@ function HooksEditor(): React.JSX.Element {
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' })
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [testTarget, setTestTarget] = useState<TestTarget>(null)
+  const [backupsOpen, setBackupsOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -193,6 +195,12 @@ function HooksEditor(): React.JSX.Element {
               Templates
             </button>
             <button
+              onClick={() => setBackupsOpen(true)}
+              className="text-xs px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
+            >
+              Backups
+            </button>
+            <button
               onClick={reload}
               className="text-xs px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
             >
@@ -326,6 +334,15 @@ function HooksEditor(): React.JSX.Element {
         event={testTarget?.event ?? 'PreToolUse'}
         command={testTarget?.command ?? ''}
         onClose={() => setTestTarget(null)}
+      />
+      <BackupsModal
+        open={backupsOpen}
+        scope={scope}
+        onClose={() => setBackupsOpen(false)}
+        onRestored={() => {
+          setBackupsOpen(false)
+          reload()
+        }}
       />
     </div>
   )
