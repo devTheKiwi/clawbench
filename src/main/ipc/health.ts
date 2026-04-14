@@ -1,13 +1,15 @@
 import { promises as fs, constants as fsConstants } from 'fs'
 import { spawn } from 'child_process'
 import { homedir } from 'os'
-import { join } from 'path'
+import { join, isAbsolute } from 'path'
 import { ipcMain } from 'electron'
 import type {
   HealthCheck,
   HealthFixResult,
   HealthReport,
-  HealthStatus
+  HealthStatus,
+  HooksConfig,
+  Settings
 } from '../../shared/types'
 
 const MIN_NODE_MAJOR = 18
@@ -282,6 +284,106 @@ async function checkMcpServers(): Promise<HealthCheck> {
   }
 }
 
+function firstToken(command: string): string | null {
+  const trimmed = command.trim()
+  if (trimmed.length === 0) return null
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    const quote = trimmed[0]
+    const end = trimmed.indexOf(quote, 1)
+    if (end > 1) return trimmed.slice(1, end)
+  }
+  return trimmed.split(/\s+/)[0]
+}
+
+function expandHome(p: string): string {
+  if (p === '~') return homedir()
+  if (p.startsWith('~/')) return join(homedir(), p.slice(2))
+  return p
+}
+
+async function resolveCommand(token: string): Promise<boolean> {
+  const expanded = expandHome(token)
+  if (isAbsolute(expanded) || expanded.startsWith('./') || expanded.startsWith('../')) {
+    try {
+      await fs.access(expanded)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const r = await shellRun(`command -v ${JSON.stringify(expanded)}`, 5_000)
+  if ('error' in r) return false
+  return r.code === 0 && r.stdout.trim().length > 0
+}
+
+async function collectHookCommands(): Promise<
+  { scope: 'user' | 'local'; event: string; command: string }[]
+> {
+  const files: { scope: 'user' | 'local'; path: string }[] = [
+    { scope: 'user', path: join(homedir(), '.claude', 'settings.json') },
+    { scope: 'local', path: join(homedir(), '.claude', 'settings.local.json') }
+  ]
+  const out: { scope: 'user' | 'local'; event: string; command: string }[] = []
+  for (const f of files) {
+    try {
+      const raw = await fs.readFile(f.path, 'utf8')
+      const parsed = JSON.parse(raw) as Settings
+      const hooks: HooksConfig = parsed.hooks ?? {}
+      for (const [event, groups] of Object.entries(hooks)) {
+        if (!groups) continue
+        for (const group of groups) {
+          for (const h of group.hooks) {
+            if (h.command && h.command.trim().length > 0) {
+              out.push({ scope: f.scope, event, command: h.command })
+            }
+          }
+        }
+      }
+    } catch {
+      // missing or invalid — covered by other checks
+    }
+  }
+  return out
+}
+
+async function checkHookCommands(): Promise<HealthCheck> {
+  const commands = await collectHookCommands()
+  if (commands.length === 0) {
+    return {
+      id: 'hook-commands',
+      title: 'Hook commands',
+      status: 'ok',
+      detail: 'No hook commands configured.'
+    }
+  }
+  const missing: string[] = []
+  const seen = new Set<string>()
+  for (const c of commands) {
+    const token = firstToken(c.command)
+    if (!token) continue
+    const key = `${c.scope}:${token}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const ok = await resolveCommand(token)
+    if (!ok) missing.push(`${c.scope}/${c.event}: ${token}`)
+  }
+  if (missing.length === 0) {
+    return {
+      id: 'hook-commands',
+      title: 'Hook commands',
+      status: 'ok',
+      detail: `All ${commands.length} hook command(s) resolve.`
+    }
+  }
+  return {
+    id: 'hook-commands',
+    title: 'Hook commands',
+    status: 'warn',
+    detail: `${missing.length} hook command(s) do not resolve.`,
+    hint: missing.slice(0, 5).join(' · ') + (missing.length > 5 ? ' …' : '')
+  }
+}
+
 async function runChecks(): Promise<HealthReport> {
   const claudeDir = join(homedir(), '.claude')
   const checks: HealthCheck[] = []
@@ -302,6 +404,7 @@ async function runChecks(): Promise<HealthReport> {
       join(claudeDir, 'settings.local.json')
     )
   )
+  checks.push(await checkHookCommands())
   checks.push(await checkMcpServers())
   checks.push(await checkClawbenchDir())
   return { generatedAt: new Date().toISOString(), checks }
