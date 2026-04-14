@@ -28,6 +28,8 @@ Clawbench는 이 세 가지를 GUI로 올려주되, 사용자 파일은 **항상
 - **Test Run** — 각 hook의 command를 샘플 stdin과 함께 5초 타임아웃으로 실행, stdout/stderr/exit 확인
 - **Logs 탭** — `~/.clawbench/bin/hook-wrapper`를 설치하면 hook 실행이
   `~/.clawbench/logs/hooks.jsonl`에 기록됨. 패널에서 2초 폴링으로 stdin/stdout/stderr/duration 타임라인 확인
+- **Backups 모달** — 저장할 때마다 쌓이는 `~/.clawbench/backups/` 스냅샷을 스코프별로 탐색,
+  JSON 프리뷰 확인 후 원클릭 복원. Cleanup 버튼으로 스코프당 최근 40개만 유지
 
 ### 2. MCP Panel (v0.2)
 
@@ -37,6 +39,9 @@ Clawbench는 이 세 가지를 GUI로 올려주되, 사용자 파일은 **항상
 - **Add server** 모달: transport 탭 + 스코프(local/user/project) + stdio용 command/args/env,
   http·sse용 URL/headers 편집. args는 따옴표 파싱 지원
 - **Details** — `claude mcp get <name>` 원문 표시
+- **Disable / Enable** — `claude mcp get`에서 파싱한 스코프·env·헤더까지 통째로
+  `~/.clawbench/mcp-disabled.json`에 저장하고 서버는 remove. 다시 Enable 누르면
+  `claude mcp add-json`으로 원래 스코프에 그대로 복구. 설정 잃지 않고 잠시 꺼두기 가능
 - **Remove** — 스코프(auto/local/user/project) 선택 후 `claude mcp remove` 실행
 - Electron이 Dock에서 실행되어도 `/bin/sh -l -c 'command -v claude'`로 PATH를 해결
 
@@ -48,6 +53,9 @@ Clawbench는 이 세 가지를 GUI로 올려주되, 사용자 파일은 **항상
 - Node.js 런타임 버전 (Electron 임베드 기준)
 - `~/.claude` 디렉토리 존재 + 쓰기 가능 → 없으면 **Create directory** 버튼
 - `settings.json` / `settings.local.json` JSON 유효성
+- **Hook command 경로 체크** — 두 settings 파일의 모든 hook command를 수집해
+  첫 토큰이 `command -v` 또는 절대/상대 경로로 resolve 되는지 검사. 팀 설정을
+  clone했는데 필요한 스크립트가 로컬에 없을 때 바로 탐지
 - MCP 서버 상태 요약 (connected / needs-auth / failed 카운트)
 - `~/.clawbench` 저장소 쓰기 가능 여부
 
@@ -77,6 +85,15 @@ npm run build:mac
    `~/.clawbench/bin/hook-wrapper PreToolUse -- ~/.claude/hooks/your-hook.sh` 형태로 감싸면
    실행 기록이 자동으로 쌓임
 4. **MCP** 탭 → **Add server** — stdio면 command + args, http/sse면 URL + 헤더 입력 후 Add
+
+### 복구 & 토글 플로우
+
+- **설정이 깨졌을 때**: Hooks 탭 → **Backups** → 복원하려는 스냅샷 선택 → 프리뷰 확인 →
+  **Restore this backup**. 복원 직전 현재 파일도 한 번 더 백업됩니다
+- **MCP 서버를 잠시 끄고 싶을 때**: 카드의 **Disable** 클릭. 하단 Disabled 섹션에서
+  **Enable**로 언제든 원상복구. 영영 지우려면 **Forget**
+- **팀 설정을 clone한 뒤**: Health 탭에서 Hook command 경로 체크가 warn을 띄우면,
+  누락된 스크립트를 설치하거나 hook command를 수정
 
 ### 요구사항
 
@@ -113,13 +130,16 @@ src/
     ipc/
       settings.ts     settings.json 읽기/쓰기 (백업 + atomic)
       hooks.ts        hook test run, wrapper 설치, logs 읽기
-      mcp.ts          claude mcp 래핑 (list/get/add/remove)
-      health.ts       diagnostics + 픽스 실행
+      mcp.ts          claude mcp 래핑 (list/get/add/remove/disable/enable)
+      health.ts       diagnostics + 픽스 + hook command 경로 검사
+      backups.ts      ~/.clawbench/backups 리스트/복원/retention
   preload/            contextBridge (window.clawbench)
   renderer/src/
     features/
-      hooks-editor/   HooksEditor, TemplateGallery, TestRunModal, LogsPanel
-      mcp-panel/      McpPanel, AddServerModal, ServerDetailModal
+      hooks-editor/   HooksEditor, TemplateGallery, TestRunModal,
+                      LogsPanel, BackupsModal
+      mcp-panel/      McpPanel (+Disabled section),
+                      AddServerModal, ServerDetailModal
       health-dashboard/ HealthDashboard
     lib/ipc.ts        window.clawbench 프록시
   shared/types.ts     main ↔ renderer 공유 타입
