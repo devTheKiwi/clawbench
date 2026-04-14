@@ -139,11 +139,26 @@ export type AddRemoteServer = {
 
 export type AddServerInput = AddStdioServer | AddRemoteServer
 
-export type DisabledMCPEntry = {
+export type DisabledStdioEntry = {
+  kind: 'stdio'
   name: string
-  raw: string
+  scope: MCPScope
+  command: string
+  args: string[]
+  env: Record<string, string>
   disabledAt: string
 }
+
+export type DisabledRemoteEntry = {
+  kind: 'http' | 'sse'
+  name: string
+  scope: MCPScope
+  url: string
+  headers: Record<string, string>
+  disabledAt: string
+}
+
+export type DisabledMCPEntry = DisabledStdioEntry | DisabledRemoteEntry
 
 export type DisabledListResult =
   | { ok: true; entries: DisabledMCPEntry[] }

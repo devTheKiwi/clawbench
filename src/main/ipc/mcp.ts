@@ -1,7 +1,12 @@
 import { spawn } from 'child_process'
+import { promises as fs } from 'fs'
+import { homedir } from 'os'
+import { join } from 'path'
 import { ipcMain } from 'electron'
 import type {
   AddServerInput,
+  DisabledListResult,
+  DisabledMCPEntry,
   MCPGetResult,
   MCPListResult,
   MCPScope,
@@ -228,6 +233,238 @@ async function removeServer(name: string, scope?: MCPScope): Promise<MCPSimpleRe
   return { ok: true }
 }
 
+function disabledPath(): string {
+  return join(homedir(), '.clawbench', 'mcp-disabled.json')
+}
+
+async function readDisabled(): Promise<DisabledMCPEntry[]> {
+  try {
+    const raw = await fs.readFile(disabledPath(), 'utf8')
+    const data = JSON.parse(raw)
+    if (!Array.isArray(data)) return []
+    return data as DisabledMCPEntry[]
+  } catch {
+    return []
+  }
+}
+
+async function writeDisabled(entries: DisabledMCPEntry[]): Promise<void> {
+  const path = disabledPath()
+  await fs.mkdir(join(homedir(), '.clawbench'), { recursive: true })
+  await fs.writeFile(path, JSON.stringify(entries, null, 2) + '\n', 'utf8')
+}
+
+function parseScopeLine(raw: string): MCPScope | null {
+  const s = raw.toLowerCase()
+  if (s.includes('user config')) return 'user'
+  if (s.includes('project config')) return 'project'
+  if (s.includes('local config')) return 'local'
+  return null
+}
+
+function parseGetOutput(
+  name: string,
+  raw: string
+):
+  | { ok: true; entry: DisabledMCPEntry }
+  | { ok: false; error: string } {
+  const lines = raw.split('\n')
+  let scope: MCPScope | null = null
+  let type: 'stdio' | 'http' | 'sse' | null = null
+  let command = ''
+  let argsStr = ''
+  let url = ''
+  const env: Record<string, string> = {}
+  const headers: Record<string, string> = {}
+  let section: 'env' | 'headers' | null = null
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+
+    const m = /^([A-Za-z ]+):\s*(.*)$/.exec(trimmed)
+    if (m) {
+      const key = m[1].trim().toLowerCase()
+      const val = m[2].trim()
+      section = null
+      switch (key) {
+        case 'scope':
+          scope = parseScopeLine(val)
+          break
+        case 'type': {
+          const v = val.toLowerCase()
+          if (v === 'stdio' || v === 'http' || v === 'sse') type = v
+          break
+        }
+        case 'command':
+          command = val
+          break
+        case 'args':
+          argsStr = val
+          break
+        case 'url':
+          url = val
+          break
+        case 'environment':
+          section = 'env'
+          if (val) {
+            const kv = val.split('=')
+            if (kv.length >= 2) env[kv[0]] = kv.slice(1).join('=')
+          }
+          break
+        case 'headers':
+          section = 'headers'
+          if (val) {
+            const [hk, ...rest] = val.split(':')
+            if (hk && rest.length > 0) headers[hk.trim()] = rest.join(':').trim()
+          }
+          break
+        default:
+          break
+      }
+      continue
+    }
+    if (section === 'env') {
+      const kv = trimmed.split('=')
+      if (kv.length >= 2) env[kv[0]] = kv.slice(1).join('=')
+    } else if (section === 'headers') {
+      const [hk, ...rest] = trimmed.split(':')
+      if (hk && rest.length > 0) headers[hk.trim()] = rest.join(':').trim()
+    }
+  }
+
+  if (!scope) return { ok: false, error: 'Could not determine server scope.' }
+  if (!type) return { ok: false, error: 'Could not determine server transport type.' }
+
+  const disabledAt = new Date().toISOString()
+  if (type === 'stdio') {
+    if (!command) return { ok: false, error: 'stdio server has no command.' }
+    const args = argsStr.length > 0 ? argsStr.split(/\s+/) : []
+    return {
+      ok: true,
+      entry: { kind: 'stdio', name, scope, command, args, env, disabledAt }
+    }
+  }
+  if (!url) return { ok: false, error: `${type} server has no URL.` }
+  return {
+    ok: true,
+    entry: { kind: type, name, scope, url, headers, disabledAt }
+  }
+}
+
+async function disableServer(name: string): Promise<MCPSimpleResult> {
+  if (!validName(name)) return { ok: false, error: 'Invalid server name.' }
+  const getRes = await runCli(['mcp', 'get', name], 10_000)
+  if (!getRes.ok) return { ok: false, error: getRes.error }
+  if (getRes.code !== 0) {
+    return {
+      ok: false,
+      error: getRes.stderr.trim() || `claude mcp get exited ${getRes.code}`
+    }
+  }
+  const parsed = parseGetOutput(name, getRes.stdout)
+  if (!parsed.ok) return { ok: false, error: parsed.error }
+
+  const existing = await readDisabled()
+  const filtered = existing.filter((e) => e.name !== name)
+  filtered.push(parsed.entry)
+
+  try {
+    await writeDisabled(filtered)
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  const removeRes = await runCli(
+    ['mcp', 'remove', name, '-s', parsed.entry.scope],
+    15_000
+  )
+  if (!removeRes.ok) {
+    await writeDisabled(existing)
+    return { ok: false, error: removeRes.error }
+  }
+  if (removeRes.code !== 0) {
+    await writeDisabled(existing)
+    return {
+      ok: false,
+      error: removeRes.stderr.trim() || `claude mcp remove exited ${removeRes.code}`
+    }
+  }
+  return { ok: true }
+}
+
+async function enableServer(name: string): Promise<MCPSimpleResult> {
+  if (!validName(name)) return { ok: false, error: 'Invalid server name.' }
+  const entries = await readDisabled()
+  const entry = entries.find((e) => e.name === name)
+  if (!entry) return { ok: false, error: `No disabled entry for ${name}.` }
+
+  const payload =
+    entry.kind === 'stdio'
+      ? {
+          type: 'stdio',
+          command: entry.command,
+          args: entry.args,
+          env: entry.env
+        }
+      : {
+          type: entry.kind,
+          url: entry.url,
+          headers: entry.headers
+        }
+
+  const r = await runCli(
+    ['mcp', 'add-json', '-s', entry.scope, entry.name, JSON.stringify(payload)],
+    30_000
+  )
+  if (!r.ok) return { ok: false, error: r.error }
+  if (r.code !== 0) {
+    return {
+      ok: false,
+      error: r.stderr.trim() || r.stdout.trim() || `claude mcp add-json exited ${r.code}`
+    }
+  }
+
+  const remaining = entries.filter((e) => e.name !== name)
+  try {
+    await writeDisabled(remaining)
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+  return { ok: true }
+}
+
+async function forgetDisabled(name: string): Promise<MCPSimpleResult> {
+  const entries = await readDisabled()
+  const remaining = entries.filter((e) => e.name !== name)
+  try {
+    await writeDisabled(remaining)
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+  return { ok: true }
+}
+
+async function listDisabled(): Promise<DisabledListResult> {
+  try {
+    return { ok: true, entries: await readDisabled() }
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }
+  }
+}
+
 export function registerMcpIpc(): void {
   ipcMain.handle('mcp:list', async () => listServers())
   ipcMain.handle('mcp:get', async (_e, name: string) => getServer(name))
@@ -235,5 +472,11 @@ export function registerMcpIpc(): void {
   ipcMain.handle('mcp:remove', async (_e, name: string, scope?: MCPScope) =>
     removeServer(name, scope)
   )
+  ipcMain.handle('mcp:disable', async (_e, name: string) => disableServer(name))
+  ipcMain.handle('mcp:enable', async (_e, name: string) => enableServer(name))
+  ipcMain.handle('mcp:forgetDisabled', async (_e, name: string) =>
+    forgetDisabled(name)
+  )
+  ipcMain.handle('mcp:listDisabled', async () => listDisabled())
   ipcMain.handle('mcp:cliPath', async () => ({ path: await resolveCliPath() }))
 }

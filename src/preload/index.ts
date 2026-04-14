@@ -6,6 +6,7 @@ import type {
   BackupListResult,
   BackupReadResult,
   BackupRestoreResult,
+  DisabledListResult,
   HealthFixResult,
   HealthReport,
   HookEvent,
@@ -48,6 +49,14 @@ const api = {
       ipcRenderer.invoke('mcp:add', input),
     remove: (name: string, scope?: MCPScope): Promise<MCPSimpleResult> =>
       ipcRenderer.invoke('mcp:remove', name, scope),
+    disable: (name: string): Promise<MCPSimpleResult> =>
+      ipcRenderer.invoke('mcp:disable', name),
+    enable: (name: string): Promise<MCPSimpleResult> =>
+      ipcRenderer.invoke('mcp:enable', name),
+    forgetDisabled: (name: string): Promise<MCPSimpleResult> =>
+      ipcRenderer.invoke('mcp:forgetDisabled', name),
+    listDisabled: (): Promise<DisabledListResult> =>
+      ipcRenderer.invoke('mcp:listDisabled'),
     cliPath: (): Promise<{ path: string | null }> => ipcRenderer.invoke('mcp:cliPath')
   },
   health: {

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { clawbench } from '../../lib/ipc'
-import type { MCPScope, MCPServer, MCPStatus } from '../../../../shared/types'
+import type {
+  DisabledMCPEntry,
+  MCPScope,
+  MCPServer,
+  MCPStatus
+} from '../../../../shared/types'
 import AddServerModal from './AddServerModal'
 import ServerDetailModal from './ServerDetailModal'
 
@@ -21,26 +26,74 @@ const STATUS_META: Record<MCPStatus, { dot: string; label: string; text: string 
 
 function McpPanel(): React.JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'idle' })
+  const [disabled, setDisabled] = useState<DisabledMCPEntry[]>([])
   const [addOpen, setAddOpen] = useState(false)
   const [detailName, setDetailName] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<Confirm>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [busyName, setBusyName] = useState<string | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     setState({ status: 'loading' })
-    const r = await clawbench.mcp.list()
-    if (r.ok) {
-      setState({ status: 'ready', servers: r.servers, cliPath: r.cliPath })
+    const [list, disabledRes] = await Promise.all([
+      clawbench.mcp.list(),
+      clawbench.mcp.listDisabled()
+    ])
+    if (list.ok) {
+      setState({ status: 'ready', servers: list.servers, cliPath: list.cliPath })
     } else {
-      setState({ status: 'error', error: r.error, cliPath: r.cliPath })
+      setState({ status: 'error', error: list.error, cliPath: list.cliPath })
     }
+    setDisabled(disabledRes.ok ? disabledRes.entries : [])
   }, [])
 
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  const disableServer = async (name: string): Promise<void> => {
+    setBusyName(name)
+    setActionError(null)
+    setActionNotice(null)
+    const r = await clawbench.mcp.disable(name)
+    setBusyName(null)
+    if (r.ok) {
+      setActionNotice(`Disabled “${name}”. Saved for re-enabling later.`)
+      await refresh()
+    } else {
+      setActionError(r.error)
+    }
+  }
+
+  const enableServer = async (name: string): Promise<void> => {
+    setBusyName(name)
+    setActionError(null)
+    setActionNotice(null)
+    const r = await clawbench.mcp.enable(name)
+    setBusyName(null)
+    if (r.ok) {
+      setActionNotice(`Enabled “${name}”.`)
+      await refresh()
+    } else {
+      setActionError(r.error)
+    }
+  }
+
+  const forgetDisabled = async (name: string): Promise<void> => {
+    setBusyName(name)
+    setActionError(null)
+    setActionNotice(null)
+    const r = await clawbench.mcp.forgetDisabled(name)
+    setBusyName(null)
+    if (r.ok) {
+      setActionNotice(`Forgot disabled entry for “${name}”.`)
+      await refresh()
+    } else {
+      setActionError(r.error)
+    }
+  }
 
   const onAdded = async (): Promise<void> => {
     setAddOpen(false)
@@ -129,13 +182,34 @@ function McpPanel(): React.JSX.Element {
             <ServerCard
               key={s.name}
               server={s}
+              busy={busyName === s.name}
               onInspect={() => setDetailName(s.name)}
+              onDisable={() => disableServer(s.name)}
               onRemove={() => {
                 setActionError(null)
                 setConfirm({ name: s.name, scope: undefined })
               }}
             />
           ))}
+        </div>
+      )}
+
+      {disabled.length > 0 && (
+        <div className="mt-8">
+          <div className="text-xs text-white/40 mb-2 uppercase tracking-wider">
+            Disabled ({disabled.length})
+          </div>
+          <div className="space-y-2">
+            {disabled.map((d) => (
+              <DisabledCard
+                key={d.name}
+                entry={d}
+                busy={busyName === d.name}
+                onEnable={() => enableServer(d.name)}
+                onForget={() => forgetDisabled(d.name)}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -167,11 +241,15 @@ function McpPanel(): React.JSX.Element {
 
 function ServerCard({
   server,
+  busy,
   onInspect,
+  onDisable,
   onRemove
 }: {
   server: MCPServer
+  busy: boolean
   onInspect: () => void
+  onDisable: () => void
   onRemove: () => void
 }): React.JSX.Element {
   const meta = STATUS_META[server.status]
@@ -198,15 +276,79 @@ function ServerCard({
       <div className="flex items-center gap-1 shrink-0">
         <button
           onClick={onInspect}
-          className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-white/70"
+          disabled={busy}
+          className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
         >
           Details
         </button>
         <button
+          onClick={onDisable}
+          disabled={busy}
+          className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
+          title="Save config and remove from CC; re-enable later"
+        >
+          {busy ? '…' : 'Disable'}
+        </button>
+        <button
           onClick={onRemove}
-          className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-red-500/20 text-white/70"
+          disabled={busy}
+          className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-red-500/20 text-white/70 disabled:opacity-50"
         >
           Remove
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function DisabledCard({
+  entry,
+  busy,
+  onEnable,
+  onForget
+}: {
+  entry: DisabledMCPEntry
+  busy: boolean
+  onEnable: () => void
+  onForget: () => void
+}): React.JSX.Element {
+  const endpoint =
+    entry.kind === 'stdio'
+      ? `${entry.command}${entry.args.length > 0 ? ' ' + entry.args.join(' ') : ''}`
+      : entry.url
+  return (
+    <div className="border border-white/5 rounded-lg px-4 py-3 bg-white/[0.01] flex items-center gap-4 opacity-80">
+      <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-white/20" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-sm text-white/70">{entry.name}</span>
+          <span className="text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/40">
+            {entry.kind}
+          </span>
+          <span className="text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded bg-white/5 text-white/40">
+            {entry.scope}
+          </span>
+          <span className="text-[11px] text-white/40">Disabled</span>
+        </div>
+        <div className="text-[11px] text-white/30 mt-0.5 font-mono truncate">
+          {endpoint}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <button
+          onClick={onEnable}
+          disabled={busy}
+          className="text-[11px] px-2 py-1 rounded bg-emerald-500/70 hover:bg-emerald-500 text-white disabled:opacity-50"
+        >
+          {busy ? '…' : 'Enable'}
+        </button>
+        <button
+          onClick={onForget}
+          disabled={busy}
+          className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-red-500/20 text-white/60 disabled:opacity-50"
+          title="Drop the stored config without restoring"
+        >
+          Forget
         </button>
       </div>
     </div>
