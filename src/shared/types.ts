@@ -96,3 +96,55 @@ export type ReadLogsResult =
 export type InstallWrapperResult =
   | { ok: true; path: string; alreadyInstalled: boolean }
   | { ok: false; error: string }
+
+export type MCPStatus = 'connected' | 'needs-auth' | 'failed' | 'unknown'
+export type MCPTransport = 'stdio' | 'http' | 'sse' | 'unknown'
+export type MCPScope = 'user' | 'project' | 'local'
+
+export type MCPServer = {
+  name: string
+  endpoint: string
+  status: MCPStatus
+  statusDetail?: string
+  transport: MCPTransport
+  disabled?: boolean
+}
+
+export type MCPListResult =
+  | { ok: true; servers: MCPServer[]; cliPath: string }
+  | { ok: false; error: string; cliPath?: string }
+
+export type MCPGetResult =
+  | { ok: true; name: string; raw: string }
+  | { ok: false; error: string }
+
+export type MCPSimpleResult = { ok: true } | { ok: false; error: string }
+
+export type AddStdioServer = {
+  kind: 'stdio'
+  name: string
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+  scope?: MCPScope
+}
+
+export type AddRemoteServer = {
+  kind: 'http' | 'sse'
+  name: string
+  url: string
+  headers?: Record<string, string>
+  scope?: MCPScope
+}
+
+export type AddServerInput = AddStdioServer | AddRemoteServer
+
+export type DisabledMCPEntry = {
+  name: string
+  raw: string
+  disabledAt: string
+}
+
+export type DisabledListResult =
+  | { ok: true; entries: DisabledMCPEntry[] }
+  | { ok: false; error: string }

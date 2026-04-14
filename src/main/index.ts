@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerHooksIpc } from './ipc/hooks'
+import { registerMcpIpc } from './ipc/mcp'
 
 function createWindow(): void {
   // Create the browser window.
@@ -56,6 +57,7 @@ app.whenReady().then(() => {
 
   registerSettingsIpc()
   registerHooksIpc()
+  registerMcpIpc()
 
   createWindow()
 

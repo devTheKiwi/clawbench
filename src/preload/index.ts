@@ -1,8 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
+  AddServerInput,
   HookEvent,
   InstallWrapperResult,
+  MCPGetResult,
+  MCPListResult,
+  MCPScope,
+  MCPSimpleResult,
   ReadLogsResult,
   ReadSettingsResult,
   Settings,
@@ -29,6 +34,15 @@ const api = {
       ipcRenderer.invoke('hooks:wrapper:install'),
     wrapperPath: (): Promise<{ path: string }> =>
       ipcRenderer.invoke('hooks:wrapper:path')
+  },
+  mcp: {
+    list: (): Promise<MCPListResult> => ipcRenderer.invoke('mcp:list'),
+    get: (name: string): Promise<MCPGetResult> => ipcRenderer.invoke('mcp:get', name),
+    add: (input: AddServerInput): Promise<MCPSimpleResult> =>
+      ipcRenderer.invoke('mcp:add', input),
+    remove: (name: string, scope?: MCPScope): Promise<MCPSimpleResult> =>
+      ipcRenderer.invoke('mcp:remove', name, scope),
+    cliPath: (): Promise<{ path: string | null }> => ipcRenderer.invoke('mcp:cliPath')
   }
 }
 
