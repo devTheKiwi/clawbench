@@ -6,9 +6,13 @@ import {
   type HookEvent,
   type HookGroup,
   type HooksConfig,
+  type HookTemplate,
   type Settings,
   type SettingsScope
 } from '../../../../shared/types'
+import TemplateGallery from './TemplateGallery'
+import TestRunModal from './TestRunModal'
+import LogsPanel from './LogsPanel'
 
 type LoadState =
   | { status: 'idle' }
@@ -22,16 +26,23 @@ type SaveState =
   | { status: 'saved'; path: string; backupPath: string }
   | { status: 'error'; error: string }
 
+type Tab = 'editor' | 'logs'
+
+type TestTarget = { event: HookEvent; command: string } | null
+
 function cloneHooks(hooks: HooksConfig | undefined): HooksConfig {
   return hooks ? JSON.parse(JSON.stringify(hooks)) : {}
 }
 
 function HooksEditor(): React.JSX.Element {
+  const [tab, setTab] = useState<Tab>('editor')
   const [scope, setScope] = useState<SettingsScope>('user')
   const [loadState, setLoadState] = useState<LoadState>({ status: 'idle' })
   const [draft, setDraft] = useState<HooksConfig>({})
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' })
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const [testTarget, setTestTarget] = useState<TestTarget>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -63,14 +74,24 @@ function HooksEditor(): React.JSX.Element {
     setSaveState({ status: 'idle' })
   }
 
-  const addHook = (event: HookEvent): void => {
+  const addHook = (event: HookEvent, overrides?: Partial<HookGroup>): void => {
     const groups = draft[event] ? [...draft[event]!] : []
     const supportsMatcher = MATCHER_SUPPORTED_EVENTS.includes(event)
     groups.push({
-      ...(supportsMatcher ? { matcher: '*' } : {}),
-      hooks: [{ type: 'command', command: '' }]
+      ...(supportsMatcher ? { matcher: overrides?.matcher ?? '*' } : {}),
+      ...(!supportsMatcher && overrides?.matcher
+        ? { matcher: overrides.matcher }
+        : {}),
+      hooks: overrides?.hooks ?? [{ type: 'command', command: '' }]
     })
     updateDraft({ ...draft, [event]: groups })
+  }
+
+  const insertTemplate = (t: HookTemplate): void => {
+    addHook(t.event, {
+      matcher: t.matcher,
+      hooks: [{ type: 'command', command: t.command }]
+    })
   }
 
   const updateGroup = (
@@ -163,104 +184,149 @@ function HooksEditor(): React.JSX.Element {
             Edit Claude Code hooks in settings.json
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={reload}
-            className="text-xs px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
-          >
-            Reload
-          </button>
-          <button
-            onClick={save}
-            disabled={!dirty || saveState.status === 'saving'}
-            className={`text-xs px-3 py-1.5 rounded-md ${
-              dirty
-                ? 'bg-emerald-500/80 hover:bg-emerald-500 text-white'
-                : 'bg-white/5 text-white/30 cursor-not-allowed'
-            }`}
-          >
-            {saveState.status === 'saving' ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+        {tab === 'editor' && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setGalleryOpen(true)}
+              className="text-xs px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
+            >
+              Templates
+            </button>
+            <button
+              onClick={reload}
+              className="text-xs px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
+            >
+              Reload
+            </button>
+            <button
+              onClick={save}
+              disabled={!dirty || saveState.status === 'saving'}
+              className={`text-xs px-3 py-1.5 rounded-md ${
+                dirty
+                  ? 'bg-emerald-500/80 hover:bg-emerald-500 text-white'
+                  : 'bg-white/5 text-white/30 cursor-not-allowed'
+              }`}
+            >
+              {saveState.status === 'saving' ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        )}
       </header>
 
-      <div className="flex gap-1 mb-5 text-xs">
-        {(['user', 'local'] as SettingsScope[]).map((s) => (
+      <div className="flex gap-1 mb-4 text-xs border-b border-white/5">
+        {(['editor', 'logs'] as Tab[]).map((t) => (
           <button
-            key={s}
-            onClick={() => setScope(s)}
-            className={`px-3 py-1.5 rounded-md ${
-              scope === s
-                ? 'bg-white/10 text-white'
-                : 'bg-transparent text-white/50 hover:text-white'
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-3 py-2 -mb-px border-b-2 transition-colors ${
+              tab === t
+                ? 'border-white text-white'
+                : 'border-transparent text-white/50 hover:text-white'
             }`}
           >
-            {s === 'user' ? 'User (settings.json)' : 'Local (settings.local.json)'}
+            {t === 'editor' ? 'Editor' : 'Logs'}
           </button>
         ))}
       </div>
 
-      {loadState.status === 'loading' && (
-        <div className="text-sm text-white/50">Loading…</div>
-      )}
-      {loadState.status === 'error' && (
-        <div className="text-sm text-red-400">
-          Failed to read {loadState.path}: {loadState.error}
-        </div>
-      )}
-
-      {loadState.status === 'ready' && (
+      {tab === 'editor' && (
         <>
-          <div className="text-[11px] text-white/40 mb-4 font-mono truncate">
-            {loadState.path}
-            {!loadState.exists && ' (will be created on save)'}
-          </div>
-
-          {saveState.status === 'saved' && (
-            <div className="mb-4 text-xs text-emerald-400">
-              Saved. Backup: {saveState.backupPath || '(no prior file)'}
-            </div>
-          )}
-          {saveState.status === 'error' && (
-            <div className="mb-4 text-xs text-red-400">
-              Save failed: {saveState.error}
-            </div>
-          )}
-
-          <div className="space-y-5">
-            {activeEvents.map((event) => (
-              <EventSection
-                key={event}
-                event={event}
-                groups={draft[event] ?? []}
-                onAdd={() => addHook(event)}
-                onGroupChange={(i, patch) => updateGroup(event, i, patch)}
-                onCommandChange={(g, h, cmd) => updateCommand(event, g, h, cmd)}
-                onRemove={(i) => removeGroup(event, i)}
-              />
+          <div className="flex gap-1 mb-5 text-xs">
+            {(['user', 'local'] as SettingsScope[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setScope(s)}
+                className={`px-3 py-1.5 rounded-md ${
+                  scope === s
+                    ? 'bg-white/10 text-white'
+                    : 'bg-transparent text-white/50 hover:text-white'
+                }`}
+              >
+                {s === 'user' ? 'User (settings.json)' : 'Local (settings.local.json)'}
+              </button>
             ))}
           </div>
 
-          {emptyEvents.length > 0 && (
-            <div className="mt-8">
-              <div className="text-xs text-white/40 mb-2 uppercase tracking-wider">
-                Add hook for event
+          {loadState.status === 'loading' && (
+            <div className="text-sm text-white/50">Loading…</div>
+          )}
+          {loadState.status === 'error' && (
+            <div className="text-sm text-red-400">
+              Failed to read {loadState.path}: {loadState.error}
+            </div>
+          )}
+
+          {loadState.status === 'ready' && (
+            <>
+              <div className="text-[11px] text-white/40 mb-4 font-mono truncate">
+                {loadState.path}
+                {!loadState.exists && ' (will be created on save)'}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {emptyEvents.map((e) => (
-                  <button
-                    key={e}
-                    onClick={() => addHook(e)}
-                    className="text-xs px-2.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
-                  >
-                    + {e}
-                  </button>
+
+              {saveState.status === 'saved' && (
+                <div className="mb-4 text-xs text-emerald-400">
+                  Saved. Backup: {saveState.backupPath || '(no prior file)'}
+                </div>
+              )}
+              {saveState.status === 'error' && (
+                <div className="mb-4 text-xs text-red-400">
+                  Save failed: {saveState.error}
+                </div>
+              )}
+
+              <div className="space-y-5">
+                {activeEvents.map((event) => (
+                  <EventSection
+                    key={event}
+                    event={event}
+                    groups={draft[event] ?? []}
+                    onAdd={() => addHook(event)}
+                    onGroupChange={(i, patch) => updateGroup(event, i, patch)}
+                    onCommandChange={(g, h, cmd) =>
+                      updateCommand(event, g, h, cmd)
+                    }
+                    onRemove={(i) => removeGroup(event, i)}
+                    onTest={(cmd) => setTestTarget({ event, command: cmd })}
+                  />
                 ))}
               </div>
-            </div>
+
+              {emptyEvents.length > 0 && (
+                <div className="mt-8">
+                  <div className="text-xs text-white/40 mb-2 uppercase tracking-wider">
+                    Add hook for event
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {emptyEvents.map((e) => (
+                      <button
+                        key={e}
+                        onClick={() => addHook(e)}
+                        className="text-xs px-2.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/70"
+                      >
+                        + {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
+
+      {tab === 'logs' && <LogsPanel />}
+
+      <TemplateGallery
+        open={galleryOpen}
+        onClose={() => setGalleryOpen(false)}
+        onInsert={insertTemplate}
+      />
+      <TestRunModal
+        open={testTarget !== null}
+        event={testTarget?.event ?? 'PreToolUse'}
+        command={testTarget?.command ?? ''}
+        onClose={() => setTestTarget(null)}
+      />
     </div>
   )
 }
@@ -271,7 +337,8 @@ function EventSection({
   onAdd,
   onGroupChange,
   onCommandChange,
-  onRemove
+  onRemove,
+  onTest
 }: {
   event: HookEvent
   groups: HookGroup[]
@@ -279,6 +346,7 @@ function EventSection({
   onGroupChange: (index: number, patch: Partial<HookGroup>) => void
   onCommandChange: (groupIndex: number, hookIndex: number, command: string) => void
   onRemove: (index: number) => void
+  onTest: (command: string) => void
 }): React.JSX.Element {
   const supportsMatcher = MATCHER_SUPPORTED_EVENTS.includes(event)
   return (
@@ -295,38 +363,34 @@ function EventSection({
       <div className="divide-y divide-white/5">
         {groups.map((group, i) => (
           <div key={i} className="px-4 py-3 space-y-2">
-            {supportsMatcher && (
-              <div className="flex items-center gap-2">
-                <label className="text-[11px] text-white/40 w-16">matcher</label>
-                <input
-                  value={group.matcher ?? ''}
-                  onChange={(e) =>
-                    onGroupChange(i, { matcher: e.target.value || undefined })
-                  }
-                  placeholder="* or Bash or Bash(git commit.*)"
-                  className="flex-1 text-xs bg-black/30 border border-white/5 rounded px-2 py-1 font-mono text-white/90 focus:outline-none focus:border-white/20"
-                />
-                <button
-                  onClick={() => onRemove(i)}
-                  className="text-[11px] text-white/40 hover:text-red-400 px-2"
-                >
-                  remove
-                </button>
-              </div>
-            )}
-            {!supportsMatcher && (
-              <div className="flex justify-end">
-                <button
-                  onClick={() => onRemove(i)}
-                  className="text-[11px] text-white/40 hover:text-red-400"
-                >
-                  remove
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {supportsMatcher ? (
+                <>
+                  <label className="text-[11px] text-white/40 w-16">matcher</label>
+                  <input
+                    value={group.matcher ?? ''}
+                    onChange={(e) =>
+                      onGroupChange(i, { matcher: e.target.value || undefined })
+                    }
+                    placeholder="* or Bash or Bash(git commit.*)"
+                    className="flex-1 text-xs bg-black/30 border border-white/5 rounded px-2 py-1 font-mono text-white/90 focus:outline-none focus:border-white/20"
+                  />
+                </>
+              ) : (
+                <div className="flex-1" />
+              )}
+              <button
+                onClick={() => onRemove(i)}
+                className="text-[11px] text-white/40 hover:text-red-400 px-2"
+              >
+                remove
+              </button>
+            </div>
             {group.hooks.map((h, hi) => (
               <div key={hi} className="flex items-start gap-2">
-                <label className="text-[11px] text-white/40 w-16 pt-1.5">command</label>
+                <label className="text-[11px] text-white/40 w-16 pt-1.5">
+                  command
+                </label>
                 <textarea
                   value={h.command}
                   onChange={(e) => onCommandChange(i, hi, e.target.value)}
@@ -334,6 +398,13 @@ function EventSection({
                   className="flex-1 text-xs bg-black/30 border border-white/5 rounded px-2 py-1.5 font-mono text-white/90 resize-y focus:outline-none focus:border-white/20"
                   placeholder="~/.claude/hooks/my-hook.sh"
                 />
+                <button
+                  onClick={() => onTest(h.command)}
+                  disabled={!h.command.trim()}
+                  className="text-[11px] px-2 py-1.5 rounded bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Test
+                </button>
               </div>
             ))}
           </div>
