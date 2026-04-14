@@ -5,6 +5,7 @@ import icon from '../../resources/icon.png?asset'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerHooksIpc } from './ipc/hooks'
 import { registerMcpIpc } from './ipc/mcp'
+import { registerHealthIpc } from './ipc/health'
 
 function createWindow(): void {
   // Create the browser window.
@@ -58,6 +59,7 @@ app.whenReady().then(() => {
   registerSettingsIpc()
   registerHooksIpc()
   registerMcpIpc()
+  registerHealthIpc()
 
   createWindow()
 

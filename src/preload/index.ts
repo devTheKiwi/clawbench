@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
   AddServerInput,
+  HealthFixResult,
+  HealthReport,
   HookEvent,
   InstallWrapperResult,
   MCPGetResult,
@@ -43,6 +45,10 @@ const api = {
     remove: (name: string, scope?: MCPScope): Promise<MCPSimpleResult> =>
       ipcRenderer.invoke('mcp:remove', name, scope),
     cliPath: (): Promise<{ path: string | null }> => ipcRenderer.invoke('mcp:cliPath')
+  },
+  health: {
+    run: (): Promise<HealthReport> => ipcRenderer.invoke('health:run'),
+    fix: (id: string): Promise<HealthFixResult> => ipcRenderer.invoke('health:fix', id)
   }
 }
 

@@ -148,3 +148,28 @@ export type DisabledMCPEntry = {
 export type DisabledListResult =
   | { ok: true; entries: DisabledMCPEntry[] }
   | { ok: false; error: string }
+
+export type HealthStatus = 'ok' | 'warn' | 'error' | 'unknown'
+
+export type HealthFix = {
+  id: string
+  label: string
+}
+
+export type HealthCheck = {
+  id: string
+  title: string
+  status: HealthStatus
+  detail: string
+  hint?: string
+  fixes?: HealthFix[]
+}
+
+export type HealthReport = {
+  generatedAt: string
+  checks: HealthCheck[]
+}
+
+export type HealthFixResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string }
